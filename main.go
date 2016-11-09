@@ -11,7 +11,7 @@ import (
 
 	_ "github.com/denisenkom/go-mssqldb"
 
-	"crypto/tls"
+	"strconv"
 
 	_ "github.com/alexbrainman/odbc"
 	"github.com/gorilla/mux"
@@ -34,7 +34,22 @@ type Page struct {
 	RawContent string
 	Content    template.HTML
 	Date       string
-	GUID       string
+	Comments   []Comment
+	// Session    Session
+	GUID string
+}
+
+// Comment struct
+type Comment struct {
+	ID          int
+	Name        string
+	Email       string
+	CommentText string
+}
+
+// JSONResponse is a comment
+type JSONResponse struct {
+	Fields map[string]string
 }
 
 // ServePage comment here
@@ -43,8 +58,9 @@ func ServePage(w http.ResponseWriter, r *http.Request) {
 	pageGUID := vars["guid"]
 	thisPage := Page{}
 	fmt.Println(pageGUID)
-	err := database.QueryRow("SELECT page_title, page_content, page_date FROM pages WHERE page_guid = ?", pageGUID).Scan(&thisPage.Title, &thisPage.RawContent, &thisPage.Date)
+	err := database.QueryRow("SELECT page_title, page_content, page_date, page_guid FROM pages WHERE page_guid = ?", pageGUID).Scan(&thisPage.Title, &thisPage.RawContent, &thisPage.Date, &thisPage.GUID)
 	thisPage.Content = template.HTML(thisPage.RawContent)
+
 	if err != nil {
 		log.Println(err.Error())
 		http.Error(w, http.StatusText(404), http.StatusNotFound)
@@ -116,6 +132,41 @@ func APIPage(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, thisPage)
 }
 
+//APICommentPost is a comment
+func APICommentPost(w http.ResponseWriter, r *http.Request) {
+	log.Println("APICommentPost")
+
+	var commentAdded bool
+	err := r.ParseForm()
+	if err != nil {
+		log.Println(err.Error())
+	}
+
+	name := r.FormValue("name")
+	email := r.FormValue("email")
+	comments := r.FormValue("comments")
+
+	res, err := database.Exec("INSERT INTO comments (comment_name, comment_email, comment_text) VALUES (?, ?, ?)", name, email, comments)
+
+	if err != nil {
+		log.Println(err.Error())
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		commentAdded = false
+	} else {
+		commentAdded = true
+	}
+	commentAddedBool := strconv.FormatBool(commentAdded)
+	var resp JSONResponse
+	resp.Fields["id"] = string(id)
+	resp.Fields["added"] = commentAddedBool
+	jsonResp, _ := json.Marshal(resp)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintln(w, jsonResp)
+}
+
 func main() {
 	// dbConn := fmt.Sprintf("server=%s;Database=%s;Integrated Security=true;", DBHost, DBDbase)
 
@@ -137,14 +188,20 @@ func main() {
 	routes.HandleFunc("/api/pages/{guid:[0-9a-zA\\-]+}", APIPage).
 		Methods("GET").
 		Schemes("https")
+	routes.HandleFunc("/api/comments", APICommentPost).
+		Methods("POST")
 	routes.HandleFunc("/page/{guid:[0-9a-zA\\-]+}", ServePage)
+	routes.HandleFunc("/", RedirIndex)
+	routes.HandleFunc("/home", ServeIndex)
 	http.Handle("/", routes)
 
-	certificates, err := tls.LoadX509KeyPair("server.pem", "server.key")
-	if err != nil {
-		fmt.Println("Error!!! " + err.Error())
-	}
-	tlsConf := tls.Config{Certificates: []tls.Certificate{certificates}}
-	tls.Listen("tcp", PORT, &tlsConf)
+	http.ListenAndServe(PORT, nil)
+
+	/*
+		certificates, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
+
+		tlsConf := tls.Config{Certificates: []tls.Certificate{certificates}}
+		tls.Listen("tcp", PORT, &tlsConf)
+	*/
 
 }
