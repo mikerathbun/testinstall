@@ -30,13 +30,14 @@ var database *sql.DB
 
 // Page Defines data structure for the page.
 type Page struct {
-	Title      string
-	RawContent string
-	Content    template.HTML
-	Date       string
-	Comments   []Comment
+	ID			int
+	Title      	string
+	RawContent 	string
+	Content    	template.HTML
+	Date       	string
+	Comments   	[]Comment
 	// Session    Session
-	GUID string
+	GUID 		string
 }
 
 // Comment struct
@@ -66,7 +67,16 @@ func ServePage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(404), http.StatusNotFound)
 		log.Println("Couldn't get page!")
 		return
+	}
 
+	comments, err := database.Query("SELECT ID, comment_name Name, comment_email, comment_text FROM comments WHERE page_id = ?", thisPage.ID)
+	if err != nil {
+		log.Println(err)
+	}
+	for comments.Next() {
+		var comment Comment
+		comments.Scan(&comment.ID, &comment.Name, &comment.Email, &comment.CommentText)
+		thisPage.Comments = append(thisPage.Comments, comment)
 	}
 	t, _ := template.ParseFiles("templates/blog.html")
 	t.Execute(w, thisPage)
@@ -145,8 +155,9 @@ func APICommentPost(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	email := r.FormValue("email")
 	comments := r.FormValue("comments")
+	pageID := r.FormValue("guid")
 
-	res, err := database.Exec("INSERT INTO comments (comment_name, comment_email, comment_text) VALUES (?, ?, ?)", name, email, comments)
+	res, err := database.Exec("INSERT INTO comments (page_guid,  comment_name, comment_email, comment_text) VALUES (?, ?, ?, ?)", pageID, name, email, comments)
 
 	if err != nil {
 		log.Println(err.Error())
@@ -154,10 +165,13 @@ func APICommentPost(w http.ResponseWriter, r *http.Request) {
 
 	id, err := res.LastInsertId()
 	if err != nil {
+
 		commentAdded = false
 	} else {
 		commentAdded = true
 	}
+
+	fmt.Printf("LastID was: %d", id)
 	commentAddedBool := strconv.FormatBool(commentAdded)
 	var resp JSONResponse
 	resp.Fields["id"] = string(id)
@@ -166,6 +180,31 @@ func APICommentPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintln(w, jsonResp)
 }
+// APICommentPut comments
+func APICommentPut(w http.ResponseWriter, r *http.Request) {
+  err := r.ParseForm()
+  if err != nil {
+  log.Println(err.Error())
+  }
+  vars := mux.Vars(r)
+  id := vars["id"]
+  fmt.Println(id)
+  name := r.FormValue("name")
+  email := r.FormValue("email")
+  comments := r.FormValue("comments")
+  res, err := database.Exec("UPDATE comments SET comment_name=?, comment_email=?, comment_text=? WHERE comment_id=?", name, email, comments, id)
+  fmt.Println(res)
+  if err != nil {
+    log.Println(err.Error())
+  }
+
+  var resp JSONResponse
+
+  jsonResp, _ := json.Marshal(resp)
+  w.Header().Set("Content-Type", "application/json")
+  fmt.Fprintln(w, jsonResp)
+}
+
 
 func main() {
 	// dbConn := fmt.Sprintf("server=%s;Database=%s;Integrated Security=true;", DBHost, DBDbase)
@@ -190,6 +229,9 @@ func main() {
 		Schemes("https")
 	routes.HandleFunc("/api/comments", APICommentPost).
 		Methods("POST")
+	routes.HandleFunc("/api/comments/{id:[\\w\\d\\-]+}", APICommentPut).
+		Methods("PUT")
+
 	routes.HandleFunc("/page/{guid:[0-9a-zA\\-]+}", ServePage)
 	routes.HandleFunc("/", RedirIndex)
 	routes.HandleFunc("/home", ServeIndex)
